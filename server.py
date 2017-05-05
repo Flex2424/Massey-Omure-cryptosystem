@@ -1,99 +1,125 @@
 import socket
 import gmpy2
 from random import randint
-from os import urandom
-
+from Crypto.Cipher import DES
 import asn1
 
 
-class MasseyOmureServer:
-    def __init__(self):
-        self.p = 0
-        self.r = 0
-        self.b = 0
-        self.t = 0
+def parse_file(filename, mylist):
+    with open(filename, 'rb') as file:
+        data = file.read()
+    file = asn1.Decoder()
+    file.start(data)
+    parsing_file(file, mylist)
 
-        self.sock = socket.socket()
-        self.conn = None
-        self.addr = None
 
-        self.decoded_values = []
-        self.decoded_values_2 = []
-
-    def making_step_two(self):
-        self.sock.bind(('', 9090))
-        self.sock.listen(1)
-        self.conn, self.addr = self.sock.accept()
-        print('[+] Connected from: ', self.addr)
-        data = self.conn.recv(1024)
-        with open('received_step1', 'wb') as file:
-            file.write(data)
-
-        self.parse_data('received_step1')
-
-    def parse_file(self, filename, mylist):
-        with open(filename, 'rb') as file:
-            data = file.read()
-        file = asn1.Decoder()
-        file.start(data)
-        self.parsing_file(file, mylist)
-
-    def parsing_file(self, file, mylist):
-        while not file.eof():
-            try:
-                tag = file.peek()
-                if tag.nr == asn1.Numbers.Null:
-                    break
-                if tag.typ == asn1.Types.Primitive:
-                    tag, value = file.read()
-                    if tag.nr == asn1.Numbers.Integer:
-                        self.mylist.append(value)
-                else:
-                    file.enter()
-                    self.parsing_file(file, mylist)
-                    file.leave()
-            except asn1.Error:
+def parsing_file(file, mylist):
+    while not file.eof():
+        try:
+            tag = file.peek()
+            if tag.nr == asn1.Numbers.Null:
                 break
+            if tag.typ == asn1.Types.Primitive:
+                tag, value = file.read()
+                if tag.nr == asn1.Numbers.Integer:
+                    mylist.append(value)
+            else:
+                file.enter()
+                parsing_file(file, mylist)
+                file.leave()
+        except asn1.Error:
+            break
 
-    def making_step_two(self):
-        ta = self.decoded_values[2]
-        r = self.decoded_values[1]
-        p = self.decoded_values[0]
+decoded_values = []
+decoded_values_2 = []
 
-        while True:
-            self.b = gmpy2.next_prime(randint(50000, 500000))
-            if gmpy2.invert(self.b, r) != 0:
-                break
+sock = socket.socket()
+sock.bind(('', 9090))
+sock.listen(1)
+conn, addr = sock.accept()
+print('[+] Connected from: ', addr)
+data = conn.recv(1024)
+if len(data):
+    print('\n[+] Received first ASN-struct from client')
+    print('[+] Saved as "received_step1"')
+with open('received_step1', 'wb') as file:
+    file.write(data)
 
-        tab = gmpy2.powmod(ta, self.b, p)
+parse_file('received_step1', decoded_values)
 
-        file2 = asn1.Encoder()
-        file2.start()
-        file2.enter(asn1.Numbers.Sequence)
-        file2.enter(asn1.Numbers.Set)
-        file2.enter(asn1.Numbers.Sequence)
-        file2.write(b'\x80\x07\x02\x00', asn1.Numbers.OctetString)
-        file2.write(b'mo', asn1.Numbers.UTF8String)
-        file2.enter(asn1.Numbers.Sequence)
-        file2.leave()
 
-        file2.enter(asn1.Numbers.Sequence)
-        file2.leave()
+ta = decoded_values[2]
+r = decoded_values[1]
+p = decoded_values[0]
+print('\n[+] Received p, r, t^a')
 
-        file2.enter(asn1.Numbers.Sequence)
-        file2.write(tab, asn1.Numbers.Integer)
-        file2.leave()
-        file2.leave()
-        file2.leave()
+while True:
+    b = gmpy2.next_prime(randint(50000, 500000))
+    if gmpy2.invert(b, r) != 0:
+        break
+print('\n[+] Generated b..')
+tab = gmpy2.powmod(ta, b, p)
+print('\n[+] Making b^a..')
 
-        file2.enter(asn1.Numbers.Sequence)
-        file2.leave()
-        file2.leave()
-        encoded_bytes2 = file2.output()
-        with open('step2', 'wb') as f:
-            f.write(encoded_bytes2)
+file2 = asn1.Encoder()
+file2.start()
+file2.enter(asn1.Numbers.Sequence)
+file2.enter(asn1.Numbers.Set)
+file2.enter(asn1.Numbers.Sequence)
+file2.write(b'\x80\x07\x02\x00', asn1.Numbers.OctetString)
+file2.write(b'mo', asn1.Numbers.UTF8String)
+file2.enter(asn1.Numbers.Sequence)
+file2.leave()
 
-        self.conn.send(encoded_bytes2)
+file2.enter(asn1.Numbers.Sequence)
+file2.leave()
+
+file2.enter(asn1.Numbers.Sequence)
+file2.write(tab, asn1.Numbers.Integer)
+file2.leave()
+file2.leave()
+file2.leave()
+
+file2.enter(asn1.Numbers.Sequence)
+file2.leave()
+file2.leave()
+encoded_bytes2 = file2.output()
+with open('step2', 'wb') as f:
+    f.write(encoded_bytes2)
+print('\n[+] Sendind data to client...')
+conn.send(encoded_bytes2)
+
+data = conn.recv(1024)
+if len(data):
+    print('\n[+] Received new ASN-struct from client')
+    print('[+] Saved as "received_step3"')
+with open('received_step3', 'wb') as file:
+    file.write(data)
+
+parse_file('received_step3', decoded_values_2)
+
+tb = decoded_values_2[0]
+reverse_b = gmpy2.invert(b, r)
+new_t = int(gmpy2.powmod(tb, reverse_b, p))
+print('\n[+] Calculated (t^b)^b^(-1)')
+new_t %= 2 ** 64
+print(new_t)
+key = new_t.to_bytes(8, byteorder='big')
+# key = t.to_bytes(8, byteorder='big')
+
+decrypted_text = bytes()
+des = DES.new(key, DES.MODE_ECB)
+with open('cipher', 'rb') as file:
+    while True:
+        block = file.read(DES.block_size)
+        if len(block) == 0:
+            break
+        if len(block) % DES.block_size != 0:
+            block += b'\x03' * (DES.block_size - len(block) % DES.block_size)
+        decrypted_text += des.decrypt(block)
+
+print('\n[+]Decrypted text:')
+print(decrypted_text.decode('utf-8', 'ignore'))
 
 
 

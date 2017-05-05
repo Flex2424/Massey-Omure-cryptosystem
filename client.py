@@ -2,65 +2,152 @@ import socket
 import gmpy2
 from random import randint
 from os import urandom
+from Crypto.Cipher import DES
 
 import asn1
 
 
-class MasseyOmureClient:
-    def __init__(self):
-        self.p = gmpy2.next_prime(randint(50000, 500000))
-        self.r = self.p - 1
-        self._t = urandom(24)
+def parse_file(filename, mylist):
+    with open(filename, 'rb') as file:
+        data = file.read()
+    file = asn1.Decoder()
+    file.start(data)
+    parsing_file(file, mylist)
 
-        while True:
-            self.a = gmpy2.next_prime(randint(50000, 500000))
-            if gmpy2.invert(self.a, self.r) != 0:
+
+def parsing_file(file, mylist):
+    while not file.eof():
+        try:
+            tag = file.peek()
+            if tag.nr == asn1.Numbers.Null:
                 break
-        self.t = int.from_bytes(self._t, byteorder='big')
-        self.t %= self.p
-        self.ta = gmpy2.powmod(self.t, self.a, self.p)
+            if tag.typ == asn1.Types.Primitive:
+                tag, value = file.read()
+                if tag.nr == asn1.Numbers.Integer:
+                    mylist.append(value)
+            else:
+                file.enter()
+                parsing_file(file, mylist)
+                file.leave()
+        except asn1.Error:
+            break
 
-        self.sock = socket.socket()
 
-    def making_step_one(self):
-        asn = asn1.Encoder()
-        asn.start()
-        asn.enter(asn1.Numbers.Sequence)
-        asn.write(self.p, asn1.Numbers.Integer)
-        asn.write(self.r, asn1.Numbers.Integer)
-        asn.leave()
+def encrypt_triple_des(key):
+    cipher_text = bytes()
+    des = DES.new(key, DES.MODE_ECB)
+    with open('input', 'r') as file:
+        data = file.read()
+        to_add = 0
+        if len(data) % 8 != 0:
+            to_add = 8 - len(data) % 8
+        data += ' ' * to_add
+        cipher_text = des.encrypt(data)
+        return cipher_text
 
-        asn.enter(asn1.Numbers.Sequence)
-        asn.write(self.ta, asn1.Numbers.Integer)
-        asn.leave()
+p = gmpy2.next_prime(randint(50000, 500000))
+r = p - 1
+t = 15394852587444895931
 
-        asn.enter(asn1.Numbers.Sequence)
-        asn.enter(asn1.Numbers.Set)
-        asn.enter(asn1.Numbers.Sequence)
-        asn.write(b'\x80\x07\x02\x00', asn1.Numbers.OctetString)
-        asn.write(b'mo', asn1.Numbers.UTF8String)
-        asn.enter(asn1.Numbers.Sequence)
-        asn.leave()
-        asn.enter(asn1.Numbers.Sequence)
-        asn.write(self.p, asn1.Numbers.Integer)
-        asn.write(self.r, asn1.Numbers.Integer)
-        asn.leave()
-        asn.leave()
+decoded_values = []
+decoded_values_2 = []
 
-        asn.enter(asn1.Numbers.Sequence)
-        asn.write(self.ta, asn1.Numbers.Integer)
-        asn.leave()
-        asn.leave()
-        asn.leave()
-        asn.enter(asn1.Numbers.Sequence)
-        asn.leave()
-        asn.leave()
-        return asn.output()
+while True:
+    a = gmpy2.next_prime(randint(50000, 500000))
+    if gmpy2.invert(a, r) != 0:
+        break
 
-    def send_step_one(self, encoded_bytes):
-        self.sock.connect(('localhost', 9090))
-        self.sock.send(encoded_bytes)
+print('\n[+] Generated a..')
+# self.t = int.from_bytes(self._t, byteorder='big')
+t %= p
+key = int(t).to_bytes(8, byteorder='big')
+cipher_text = encrypt_triple_des(key)
+with open('cipher', 'wb') as c:
+    c.write(cipher_text)
+ta = gmpy2.powmod(t, a, p)
+print('\n[+] Calculated t^a')
 
+asn = asn1.Encoder()
+asn.start()
+asn.enter(asn1.Numbers.Sequence)
+asn.write(p, asn1.Numbers.Integer)
+asn.write(r, asn1.Numbers.Integer)
+asn.leave()
+
+asn.enter(asn1.Numbers.Sequence)
+asn.write(ta, asn1.Numbers.Integer)
+asn.leave()
+
+asn.enter(asn1.Numbers.Sequence)
+asn.enter(asn1.Numbers.Set)
+asn.enter(asn1.Numbers.Sequence)
+asn.write(b'\x80\x07\x02\x00', asn1.Numbers.OctetString)
+asn.write(b'mo', asn1.Numbers.UTF8String)
+asn.enter(asn1.Numbers.Sequence)
+asn.leave()
+asn.enter(asn1.Numbers.Sequence)
+asn.write(p, asn1.Numbers.Integer)
+asn.write(r, asn1.Numbers.Integer)
+asn.leave()
+asn.leave()
+
+asn.enter(asn1.Numbers.Sequence)
+asn.write(ta, asn1.Numbers.Integer)
+asn.leave()
+asn.leave()
+asn.leave()
+asn.enter(asn1.Numbers.Sequence)
+asn.leave()
+# asn.leave()
+out = asn.output()
+with open('step1', 'wb') as file:
+    file.write(out)
+
+sock = socket.socket()
+sock.connect(('localhost', 9090))
+sock.send(out)
+print('\n[+]Sending data to server..')
+data = sock.recv(1024)
+with open('received_step_2', 'wb') as file:
+    file.write(data)
+
+parse_file('received_step_2', decoded_values)
+print('\n[+] Received t^ab')
+tab = decoded_values[0]
+reverse_a = gmpy2.invert(a, r)
+tb = gmpy2.powmod(tab, reverse_a, p)
+print('\n[+] Calc t^ab^a^(-1)')
+file3 = asn1.Encoder()
+file3.start()
+file3.enter(asn1.Numbers.Sequence)
+file3.enter(asn1.Numbers.Set)
+file3.enter(asn1.Numbers.Sequence)
+file3.write(b'\x80\x07\x02\x00', asn1.Numbers.OctetString)
+file3.write(b'mo', asn1.Numbers.UTF8String)
+file3.enter(asn1.Numbers.Sequence)
+file3.leave()
+
+file3.enter(asn1.Numbers.Sequence)
+file3.leave()
+
+file3.enter(asn1.Numbers.Sequence)
+file3.write(tb, asn1.Numbers.Integer)
+file3.leave()
+file3.leave()
+file3.leave()
+
+file3.enter(asn1.Numbers.Sequence)
+file3.write(b'\x01\x21', asn1.Numbers.OctetString)
+file3.write(len(cipher_text), asn1.Numbers.Integer)
+file3.leave()
+file3.leave()
+file3.write(cipher_text)
+encoded_bytes3 = file3.output()
+with open('step3', 'wb') as f3:
+    f3.write(encoded_bytes3)
+
+sock.send(encoded_bytes3)
+print('\n[+] Done!')
 
 
 
